@@ -111,9 +111,15 @@ module ActiveMerchant #:nodoc:
           add_customer_id(post, options)
           add_code(post, options)
           add_payment(post, payment, options)
+          add_mdd_fields(post, options)
           add_amount(post, amount)
           add_address(post, payment, options[:billing_address], options, :billTo)
           add_address(post, payment, options[:shipping_address], options, :shipTo)
+          add_business_rules_data(post, payment, options)
+          add_reconciliation_id(post, options)
+          add_sec_code(post, options)
+          add_invoice_number(post, options)
+          add_partner_solution_id(post)
           add_stored_credentials(post, payment, options)
         end.compact
       end
@@ -121,7 +127,11 @@ module ActiveMerchant #:nodoc:
       def build_reference_request(amount, options)
         { clientReferenceInformation: {}, orderInformation: {} }.tap do |post|
           add_code(post, options)
+          add_mdd_fields(post, options)
           add_amount(post, amount)
+          add_reconciliation_id(post, options)
+          add_sec_code(post, options)
+          add_partner_solution_id(post)
         end.compact
       end
 
@@ -129,9 +139,11 @@ module ActiveMerchant #:nodoc:
         { clientReferenceInformation: {}, paymentInformation: {}, orderInformation: {} }.tap do |post|
           add_code(post, options)
           add_credit_card(post, payment)
+          add_mdd_fields(post, options)
           add_amount(post, amount)
           add_address(post, payment, options[:billing_address], options, :billTo)
           add_merchant_description(post, options)
+          add_sec_code(post, options)
         end.compact
       end
 
@@ -400,6 +412,55 @@ module ActiveMerchant #:nodoc:
           'Signature' => get_http_signature(action, digest, http_method, date),
           'Digest' => digest
         }
+      end
+
+      def add_business_rules_data(post, payment, options)
+        prioritized_options = [options, @options]
+        post[:processingInformation][:authorizationOptions] = {}
+        unless payment.is_a?(NetworkTokenizationCreditCard)
+          post[:processingInformation][:authorizationOptions][:ignoreAvsResult] = 'true' if extract_option(prioritized_options, :ignore_avs).to_s == 'true'
+          post[:processingInformation][:authorizationOptions][:ignoreCvResult] = 'true' if extract_option(prioritized_options, :ignore_cvv).to_s == 'true'
+        end
+      end
+
+      def extract_option(prioritized_options, option_name)
+        options_matching_key = prioritized_options.detect do |options|
+          options.has_key? option_name
+        end
+        options_matching_key[option_name] if options_matching_key
+      end
+
+      def add_mdd_fields(post, options)
+        mdd_fields = options.select { |k, v| k.to_s.start_with?('mdd_field') && v.present? }
+        return unless mdd_fields.present?
+
+        post[:merchantDefinedInformation] = mdd_fields.map do |key, value|
+          { key: key, value: value }
+        end
+      end
+
+      def add_reconciliation_id(post, options)
+        return unless options[:reconciliation_id].present?
+
+        post[:clientReferenceInformation][:reconciliationId] = options[:reconciliation_id]
+      end
+
+      def add_sec_code(post, options)
+        return unless options[:sec_code].present?
+
+        post[:processingInformation][:bankTransferOptions] = { secCode: options[:sec_code] }
+      end
+
+      def add_invoice_number(post, options)
+        return unless options[:invoice_number].present?
+
+        post[:orderInformation][:invoiceDetails] = { invoiceNumber: options[:invoice_number] }
+      end
+
+      def add_partner_solution_id(post)
+        return unless application_id
+
+        post[:clientReferenceInformation][:partner] = { solutionId: application_id }
       end
     end
   end
